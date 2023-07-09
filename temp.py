@@ -1,30 +1,33 @@
-from server import char2num, num2char, createPipeline, reduceJoin, loadVideo
+from server import createPipeline
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import matplotlib
-import numpy as np
-import random
-from keras import layers, models
-import cv2
+from keras import layers, models, Input
+from modelLayers import ResidualBlock
 
 matplotlib.use("Qt5Agg")
 
 
-# frames = loadVideo('.\\data\\s1\\brwn2p.mpg')
+# data = createPipeline()
+# train = data.take(450)
+# test = data.skip(450)
+# input_shape = data.as_numpy_iterator().next()[0][0].shape
 
 
-data = createPipeline()
-
-train = data.take(450)
-test = data.skip(450)
-
-sample = iter(data)
-
-val = sample.next()
-
-frames = val[0][0].numpy()
+X = Input(
+    shape=(75, 50, 100, 1), batch_size=2
+)
 
 
-plt.imshow(frames[55, :, :, 0].astype(np.uint8), cmap='gray')
+
+lay = ResidualBlock()
+
+
+
+
+
+
+
+
 
 

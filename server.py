@@ -1,7 +1,7 @@
 import os
 import cv2
 import tensorflow as tf
-from preprocessing import extractFace
+from preprocessing import cropByMouth
 
 vocab = [x for x in "abcdefghijklmnopqrstuvwxyz'?!123456789 "]
 char2num = tf.keras.layers.StringLookup(
@@ -29,9 +29,9 @@ def loadVideo(path):
     frames = tf.cast(
         frames, tf.float32
     )
-    crop_frames = extractFace(frames)
+    _, crop_frames_gray = cropByMouth(frames)
     crop_frames = tf.image.resize(
-        crop_frames, [50, 100], method='bicubic'
+        crop_frames_gray, [50, 100], method='bicubic'
     )
     return crop_frames
 
@@ -96,7 +96,7 @@ def createPipeline():
     )
 
     data = data.padded_batch(
-        2, padded_shapes=([75, None, None, None], [40])
+        1, padded_shapes=([75, None, None, None], [40])
     )
 
     data = data.prefetch(

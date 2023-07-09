@@ -4,7 +4,7 @@ import tensorflow as tf
 import random
 
 
-def extractFace(tf_rgb_frames):
+def cropByMouth(tf_rgb_frames):
     rgb_frames = tf_rgb_frames.numpy()
 
     image_median = np.median(
@@ -12,7 +12,7 @@ def extractFace(tf_rgb_frames):
     )
 
     image_hsv = cv2.cvtColor(
-        image_median, cv2.COLOR_BGR2HSV
+        image_median, cv2.COLOR_RGB2HSV
     )
 
     threshold, image_bin = cv2.threshold(
@@ -40,8 +40,10 @@ def extractFace(tf_rgb_frames):
         ],
     ]
 
+    tf_rgb_frames_crop = tf_rgb_frames[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
+
     tf_gray_frames_crop = tf.image.rgb_to_grayscale(
-        tf_rgb_frames[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
+        tf_rgb_frames_crop
     )
     image_median = np.median(
         tf_gray_frames_crop.numpy(), axis=0
@@ -85,6 +87,7 @@ def extractFace(tf_rgb_frames):
             face_prop[1] = curr_prop[1]
 
     tf_gray_frames_crop = tf_gray_frames_crop[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :]
+    tf_rgb_frames_crop = tf_rgb_frames_crop[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :]
 
     image_median = np.median(
         tf_gray_frames_crop.numpy(), axis=0
@@ -128,8 +131,8 @@ def extractFace(tf_rgb_frames):
             mouth_prop[1] = curr_prop[1]
 
     tf_gray_frames_crop = tf_gray_frames_crop[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
-
-    return tf_gray_frames_crop
+    tf_rgb_frames_crop = tf_rgb_frames_crop[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
+    return tf_rgb_frames_crop, tf_gray_frames_crop
 
 
 def contrast_stretch(img_gray):
