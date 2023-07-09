@@ -96,7 +96,7 @@ def createPipeline():
     )
 
     data = data.padded_batch(
-        1, padded_shapes=([75, None, None, None], [40])
+        2, padded_shapes=([75, None, None, None], [40])
     )
 
     data = data.prefetch(
