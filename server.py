@@ -31,7 +31,7 @@ def loadVideo(path):
     )
     crop_frames = extractFace(frames)
     crop_frames = tf.image.resize(
-        crop_frames, [100, 100], method='bicubic'
+        crop_frames, [50, 100], method='bicubic'
     )
     return crop_frames
 

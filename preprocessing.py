@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import tensorflow as tf
+import random
 
 
 def extractFace(tf_rgb_frames):
@@ -19,7 +20,7 @@ def extractFace(tf_rgb_frames):
     )
 
     kernel = np.ones(
-        (3, 3), dtype=np.uint8
+        (5, 5), dtype=np.uint8
     )
 
     image_bin = cv2.morphologyEx(
@@ -42,30 +43,170 @@ def extractFace(tf_rgb_frames):
     tf_gray_frames_crop = tf.image.rgb_to_grayscale(
         tf_rgb_frames[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
     )
+    image_median = np.median(
+        tf_gray_frames_crop.numpy(), axis=0
+    )
+
+    face = faceCascade(
+        contrast_stretch(image_median)
+    )
+
+    face_prop = [
+        face[0][1] - face[0][0],
+        face[1][1] - face[1][0]
+    ]
+
+    sample_index = random.sample(
+        list(
+            range(tf_gray_frames_crop.shape[0])
+        ), 10
+    )
+
+    for smp in sample_index:
+        curr_frame = contrast_stretch(
+            tf_gray_frames_crop[smp, :, :, :].numpy()
+        )
+        curr_face = faceCascade(
+            curr_frame
+        )
+        curr_prop = [
+            curr_face[0][1] - curr_face[0][0],
+            curr_face[1][1] - curr_face[1][0]
+        ]
+
+        if (curr_face[0][0] > 0 and curr_face[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > face_prop[0]) or (
+                face_prop[0] == curr_frame.shape[1] - 1):
+            face[0] = curr_face[0]
+            face_prop[0] = curr_prop[0]
+
+        if (curr_face[1][0] > 0 and curr_face[1][1] < curr_frame.shape[0] - 1 and curr_prop[1] > face_prop[1]) or (
+                face_prop[1] == curr_frame.shape[0] - 1):
+            face[1] = curr_face[1]
+            face_prop[1] = curr_prop[1]
+
+    tf_gray_frames_crop = tf_gray_frames_crop[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :]
 
     image_median = np.median(
         tf_gray_frames_crop.numpy(), axis=0
     )
 
-    face_cascade = cv2.CascadeClassifier(
-        "data\\haarcascade_frontalface_alt.xml"
+    mouth = mouthCascade(
+        contrast_stretch(image_median)
     )
 
-    face = face_cascade.detectMultiScale(
-        image_median.astype(np.uint8)
-    )
-    if type(face) is tuple:
-        return tf_gray_frames_crop
-
-    boundary = [
-        [
-            face[0, 0], min([image_median.shape[1] - 1, face[0, 0] + face[0, 2]])
-        ],
-        [
-            face[0, 1], min([image_median.shape[0] - 1, face[0, 1] + face[0, 3]])
-        ],
+    mouth_prop = [
+        mouth[0][1] - mouth[0][0],
+        mouth[1][1] - mouth[1][0]
     ]
-    tf_gray_frames_crop = tf_gray_frames_crop[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
+
+    sample_index = random.sample(
+        list(
+            range(tf_gray_frames_crop.shape[0])
+        ), 10
+    )
+
+    for smp in sample_index:
+        curr_frame = contrast_stretch(
+            tf_gray_frames_crop[smp, :, :, :].numpy()
+        )
+        curr_mouth = mouthCascade(
+            curr_frame
+        )
+        curr_prop = [
+            curr_mouth[0][1] - curr_mouth[0][0],
+            curr_mouth[1][1] - curr_mouth[1][0]
+        ]
+
+        if (curr_mouth[0][0] > 0 and curr_mouth[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > mouth_prop[0]) or (
+                mouth_prop[0] == curr_frame.shape[1] - 1):
+            mouth[0] = curr_mouth[0]
+            mouth_prop[0] = curr_prop[0]
+
+        if (curr_mouth[1][0] > curr_frame.shape[0] // 2 and curr_prop[1] > mouth_prop[1]) or (
+                mouth_prop[1] == (curr_frame.shape[0] // 2) - 1):
+            mouth[1] = curr_mouth[1]
+            mouth_prop[1] = curr_prop[1]
+
+    tf_gray_frames_crop = tf_gray_frames_crop[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
+
     return tf_gray_frames_crop
 
 
+def contrast_stretch(img_gray):
+    img_gray = 255 * ((img_gray - img_gray.min()) / (img_gray.max() - img_gray.min()))
+    return img_gray
+
+
+def faceCascade(img_gray):
+    cascade = cv2.CascadeClassifier(
+        "data\\haarcascade_frontalface_default.xml"
+    )
+
+    rect = cascade.detectMultiScale(
+        img_gray.astype(np.uint8)
+    )
+
+    if type(rect) == tuple:
+        bound = [
+            [
+                0, img_gray.shape[1] - 1
+            ],
+            [
+                0, img_gray.shape[0] - 1
+            ]
+        ]
+        return bound
+    bound = [
+        [
+            rect[0, 0], min([img_gray.shape[1] - 1, rect[0, 0] + rect[0, 2]])
+        ],
+        [
+            rect[0, 1], min([img_gray.shape[0] - 1, rect[0, 1] + rect[0, 3] + 10])
+        ],
+    ]
+    return bound
+
+
+def mouthCascade(img_gray):
+    cascade = cv2.CascadeClassifier(
+        "data\\haarcascade_mcs_mouth.xml"
+    )
+
+    rect = cascade.detectMultiScale(
+        img_gray.astype(np.uint8), 1.4
+    )
+
+    mid = img_gray.shape[0] // 2
+
+    bound = [
+        [
+            0, img_gray.shape[1] - 1
+        ],
+        [
+            mid, img_gray.shape[0] - 1
+        ]
+    ]
+
+    if type(rect) == tuple:
+        return bound
+
+    rect = rect[rect[:, 1] > mid, :]
+
+    if rect.shape[0] == 0:
+        return bound
+
+    if rect.shape[0] > 1:
+        indices = np.argsort(rect[:, 2])[::-1]
+        rect = np.reshape(
+            rect[indices[0], :], (1, 4)
+        )
+
+    bound = [
+        [
+            max([0, rect[0, 0] - 10]), min([img_gray.shape[1] - 1, rect[0, 0] + rect[0, 2] + 10])
+        ],
+        [
+            max([mid, rect[0, 1] - 10]), min([img_gray.shape[0] - 1, rect[0, 1] + rect[0, 3] + 10])
+        ],
+    ]
+    return bound
