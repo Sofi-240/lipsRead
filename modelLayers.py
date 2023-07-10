@@ -3,49 +3,72 @@ from keras import layers, Input
 from server import char2num, num2char, reduceJoin
 
 
-class BaseBlock(tf.keras.layers.Layer):
-    def __init__(self, filters, kernel_size=(1, 3, 3), down_sample=True):
-        super(BaseBlock, self).__init__()
-        self.layer_names = []
-        self.down_sample = down_sample
-        layer_collection, self.identity_layer = resNet18Layers(
-            filters, kernel_size=kernel_size, down_sample=down_sample
+class ResnetBlock(tf.keras.layers.Layer):
+    def __init__(self, filters, down_sample=True):
+        super(ResnetBlock, self).__init__()
+        self.__filters = filters
+        self.__down_sample = down_sample
+        self.__kernel_size = (1, 3, 3)
+        self.__strides = [(1, 2, 2), (1, 1, 1)] if down_sample else [(1, 1, 1), (1, 1, 1)]
+        self.__kernel_initializer = "he_normal"
+
+        self.identity_layers_names = []
+        self.block_layers_names = []
+
+        self.conv_1 = layers.Conv3D(
+            filters=self.__filters, kernel_size=self.__kernel_size,
+            strides=self.__strides[0], padding='same',
+            kernel_initializer=self.__kernel_initializer
         )
-        for layer in layer_collection:
-            self.layer_names.append(
-                f'layer_{len(self.layer_names) + 1}'
+        self.bn_1 = layers.BatchNormalization()
+        self.act_1 = layers.Activation(
+            activation='relu'
+        )
+        self.block_layers_names += [
+            'conv_1', 'bn_1', 'act_1'
+        ]
+
+        self.conv_2 = layers.Conv3D(
+            filters=self.__filters, kernel_size=self.__kernel_size,
+            strides=self.__strides[1], padding='same',
+            kernel_initializer=self.__kernel_initializer
+        )
+        self.bn_2 = layers.BatchNormalization()
+        self.block_layers_names += [
+            'conv_2', 'bn_2',
+        ]
+
+        self.marge = layers.Add()
+        self.out = layers.Activation(
+            activation='relu'
+        )
+        self.block_layers_names += [
+            'marge', 'out',
+        ]
+
+        if self.__down_sample:
+            self.identity_conv = layers.Conv3D(
+                filters=self.__filters, kernel_size=(1, 1, 1),
+                strides=self.__strides[0], padding='same',
+                kernel_initializer=self.__kernel_initializer
             )
-            self.__setattr__(self.layer_names[-1], layer)
+            self.identity_bn = layers.BatchNormalization()
+            self.identity_layers_names += [
+                'identity_conv', 'identity_bn'
+            ]
 
     def call(self, x):
+        identity = x
+        for layer_name in self.identity_layers_names:
+            identity = self.__getattribute__(layer_name)(identity)
 
-        if self.down_sample:
-            identity = self.identity_layer(x)
-        else:
-            identity = x
-
-        for layer_name in self.layer_names:
-            curr_layer = self.__getattribute__(layer_name)
-            if str(type(curr_layer)).split('.')[-1][:-2] == 'Add':
-                x = curr_layer([x, identity])
+        for layer_name in self.block_layers_names:
+            if layer_name == 'marge':
+                x = self.__getattribute__(layer_name)([identity, x])
                 continue
-            x = curr_layer(x)
+            x = self.__getattribute__(layer_name)(x)
+
         return x
-
-
-class ResidualBlock(tf.keras.layers.Layer):
-    def __init__(self, filters, kernel_size=(1, 3, 3), down_sample=True):
-        super(ResidualBlock, self).__init__()
-        self.hidden_layer_1 = BaseBlock(
-            filters, kernel_size=kernel_size, down_sample=down_sample
-        )
-        self.hidden_layer_2 = BaseBlock(
-            filters, kernel_size=kernel_size, down_sample=False
-        )
-
-    def call(self, x):
-        x = self.hidden_layer_1(x)
-        return self.hidden_layer_2(x)
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -81,57 +104,90 @@ class ModelLipNet(tf.keras.models.Model):
     def __init__(self, input_shape):
         super(ModelLipNet, self).__init__()
         self.input_layer = Input(shape=input_shape[1:])
+        self.layers_names = []
+
         self.block1_conv = layers.Conv3D(
             filters=64, kernel_size=(1, 7, 7), padding='same', strides=(1, 1, 2),
-            input_shape=input_shape[1:]
+            input_shape=input_shape[1:], kernel_initializer="he_normal"
         )
         self.block1_bn = layers.BatchNormalization()
-        self.block1_act = layers.Activation(
-            activation='relu'
+        self.block1_pool = layers.MaxPool3D(
+            pool_size=(1, 3, 3), padding='same', strides=(1, 1, 1)
         )
+        self.layers_names += [
+            'block1_conv', 'block1_bn', 'block1_pool'
+        ]
 
-        self.block2 = ResidualBlock(
-            filters=64, kernel_size=(1, 3, 3), down_sample=False
+        self.block2_1 = ResnetBlock(
+            filters=64, down_sample=False
         )
-        self.block3 = ResidualBlock(
-            filters=256, kernel_size=(1, 3, 3), down_sample=True
+        self.block2_2 = ResnetBlock(
+            filters=64, down_sample=False
         )
-        self.block4 = ResidualBlock(
-            filters=512, kernel_size=(1, 3, 3), down_sample=True
-        )
+        self.layers_names += [
+            'block2_1', 'block2_2'
+        ]
 
-        self.block5_avg = layers.AveragePooling3D(
+        self.block3_1 = ResnetBlock(
+            filters=128, down_sample=True
+        )
+        self.block3_2 = ResnetBlock(
+            filters=128, down_sample=False
+        )
+        self.layers_names += [
+            'block3_1', 'block3_2'
+        ]
+
+        self.block4_1 = ResnetBlock(
+            filters=256, down_sample=True
+        )
+        self.block4_2 = ResnetBlock(
+            filters=256, down_sample=False
+        )
+        self.layers_names += [
+            'block4_1', 'block4_2'
+        ]
+
+        self.block5_1 = ResnetBlock(
+            filters=512, down_sample=True
+        )
+        self.block5_2 = ResnetBlock(
+            filters=512, down_sample=False
+        )
+        self.layers_names += [
+            'block5_1', 'block5_2'
+        ]
+
+        self.block6_avg = layers.AveragePooling3D(
             pool_size=(1, 7, 7), padding='same'
         )
-        self.block5_flt = layers.TimeDistributed(
+        self.block6_flt = layers.TimeDistributed(
             layers.Flatten()
         )
-        self.block5_lstm = layers.Bidirectional(
-            layers.LSTM(
-                128, kernel_initializer='Orthogonal', return_sequences=True
-            )
-        )
-        self.block5_drop = layers.Dropout(0.5)
-
         self.block6_lstm = layers.Bidirectional(
             layers.LSTM(
                 128, kernel_initializer='Orthogonal', return_sequences=True
             )
         )
         self.block6_drop = layers.Dropout(0.5)
+        self.layers_names += [
+            'block6_avg', 'block6_flt', 'block6_lstm', 'block6_drop'
+        ]
 
-        self.dense = layers.Dense(
+        self.block7_lstm = layers.Bidirectional(
+            layers.LSTM(
+                128, kernel_initializer='Orthogonal', return_sequences=True
+            )
+        )
+        self.block7_drop = layers.Dropout(0.5)
+        self.block7_dense = layers.Dense(
             char2num.vocabulary_size() + 1, kernel_initializer='he_normal', activation='softmax'
         )
-        self.layers_names = [
-            'block1_conv', 'block1_bn', 'block1_act',
-            'block2',
-            'block3',
-            'block4',
-            'block5_avg', 'block5_flt', 'block5_lstm', 'block5_drop',
-            'block6_lstm', 'block6_drop',
-            'dense'
+
+        self.layers_names += [
+            'block7_lstm', 'block7_drop', 'block7_dense'
         ]
+
         self.output_layer = self.call(self.input_layer)
 
         super(ModelLipNet, self).__init__(
@@ -144,37 +200,3 @@ class ModelLipNet(tf.keras.models.Model):
         for layer_name in self.layers_names:
             x = self.__getattribute__(layer_name)(x)
         return x
-
-
-
-def resNet18Layers(filters, kernel_size=(1, 3, 3), down_sample=True):
-    if down_sample:
-        strides = (1, 2, 2)
-    else:
-        strides = (1, 1, 1)
-
-    layer_collection = [
-        layers.Conv3D(
-            filters=filters, kernel_size=kernel_size, strides=strides, padding='same'
-        ),
-        layers.BatchNormalization(),
-        layers.Activation(
-            activation='relu'
-        ),
-        layers.Conv3D(
-            filters=filters, kernel_size=kernel_size, strides=(1, 1, 1), padding='same'
-        ),
-        layers.Add(),
-        layers.BatchNormalization(),
-        layers.Activation(
-            activation='relu'
-        )
-    ]
-    identity_layer = layers.Conv3D(
-        filters=filters, kernel_size=(1, 1, 1), strides=strides, padding='same'
-    )
-
-    return layer_collection, identity_layer
-
-
-

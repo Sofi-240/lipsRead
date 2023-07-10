@@ -1,6 +1,6 @@
 from server import createPipeline
 import tensorflow as tf
-from modelLayers import configModel, ModelLipNet
+from modelLayers import ModelLipNet
 
 
 # data = createPipeline()
