@@ -31,7 +31,7 @@ def loadVideo(path):
     )
     _, crop_frames_gray = cropByMouth(frames)
     crop_frames = tf.image.resize(
-        crop_frames_gray, [56, 112], method='bicubic'
+        crop_frames_gray, [46, 140], method='bicubic'
     )
     return crop_frames
 
