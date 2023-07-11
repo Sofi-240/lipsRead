@@ -213,3 +213,35 @@ def mouthCascade(img_gray):
         ],
     ]
     return bound
+
+
+def opticalFlowFeature(tf_array):
+    tf_np_array = tf_array.numpy()
+
+    ret_array = np.zeros_like(tf_np_array)
+
+    for i in range(1, tf_np_array.shape[0]):
+        flow = cv2.calcOpticalFlowFarneback(
+            tf_np_array[i - 1][:, :, 0].astype(np.uint8),
+            tf_np_array[i][:, :, 0].astype(np.uint8),
+            None,
+            pyr_scale=0.5,
+            levels=5,
+            winsize=5,
+            iterations=3,
+            poly_n=5,
+            poly_sigma=1.1,
+            flags=0
+        )
+        mag, _ = cv2.cartToPolar(
+            flow[..., 0], flow[..., 1]
+        )
+        ret_array[i][:, :, 0] = cv2.normalize(
+            mag, None, 0, 255, cv2.NORM_MINMAX
+        )
+
+    ret_array = tf.convert_to_tensor(
+        ret_array, dtype=tf_array.dtype
+    )
+
+    return ret_array

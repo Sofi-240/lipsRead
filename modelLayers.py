@@ -49,10 +49,11 @@ class ModelAccuracy(tf.keras.metrics.Metric):
 class ModelLipRead(tf.keras.models.Model):
     def __init__(self, input_shape):
         super(ModelLipRead, self).__init__()
-        self.input_layer = Input(shape=input_shape)
+        self.input_layer_1 = Input(shape=input_shape)
+        self.input_layer_2 = Input(shape=input_shape)
         self.layers_names = []
 
-        for i, filters_size in enumerate([128, 256, 75]):
+        for i, filters_size in enumerate([64, 256, 75]):
             names = [
                 f'{name}_{i + 1}' for name in ['conv', 'act', 'pool']
             ]
@@ -79,6 +80,9 @@ class ModelLipRead(tf.keras.models.Model):
                 )
             )
             self.layers_names += names
+            if i == 0:
+                self.marge = layers.Concatenate()
+                self.layers_names += ['marge']
 
         self.flt = layers.TimeDistributed(
             layers.Flatten(), name='flt'
@@ -115,15 +119,26 @@ class ModelLipRead(tf.keras.models.Model):
             'dense'
         ]
 
-        self.output_layer = self.call(self.input_layer)
+        self.output_layer = self.call((self.input_layer_1, self.input_layer_2))
         super(ModelLipRead, self).__init__(
-            inputs=self.input_layer,
+            inputs=(self.input_layer_1, self.input_layer_2),
             outputs=self.output_layer
         )
 
-    def call(self, x, training=False):
+    def call(self, inputs, training=False):
+        inputs = list(inputs)
+        mrg = False
+        x = None
         for layer_name in self.layers_names:
-            x = self.__getattribute__(layer_name)(x)
+            if mrg:
+                x = self.__getattribute__(layer_name)(x)
+            elif layer_name == 'marge':
+                x = self.__getattribute__(layer_name)(inputs)
+                mrg = True
+            else:
+                lay = self.__getattribute__(layer_name)
+                inputs = [lay(inp) for inp in inputs]
+
         return x
 
 
