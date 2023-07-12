@@ -1,7 +1,7 @@
 import os
 import cv2
 import tensorflow as tf
-from preprocessing import cropByMouth, opticalFlowFeature
+from preprocessing import cropByMouth
 
 vocab = list("abcdefghijklmnopqrstuvwxyz'?!123456789 ")
 char2num = tf.keras.layers.StringLookup(
@@ -31,10 +31,17 @@ def loadVideo(path):
     )
     _, crop_frames_gray = cropByMouth(frames)
     crop_frames = tf.image.resize(
-        crop_frames_gray, [46, 140], method='bicubic'
+        crop_frames_gray, [56, 112], method='bicubic'
     )
-    opt_flow_frames = opticalFlowFeature(crop_frames)
-    return crop_frames, opt_flow_frames
+    mean = tf.math.reduce_mean(crop_frames)
+    std = tf.math.reduce_std(
+        tf.cast(
+            crop_frames, tf.float32
+        )
+    )
+    return tf.cast(
+        (crop_frames - mean), tf.float32
+    ) / std
 
 
 def loadAlignments(path):
@@ -64,16 +71,16 @@ def loadData(path):
     alignmentPath = os.path.join(
         'data', 'alignments', 's1', f'{fileName}.align'
     )
-    frames, opt_flow_frames = loadVideo(videoPath)
+    frames = loadVideo(videoPath)
     alignments = loadAlignments(alignmentPath)
-    return frames, opt_flow_frames, alignments
+    return frames, alignments
 
 
 def mapData(path):
     ret = tf.py_function(
-        loadData, [path], (tf.float32, tf.float32, tf.int64)
+        loadData, [path], (tf.float32, tf.int64)
     )
-    return (ret[0], ret[1]), ret[-1]
+    return ret
 
 
 def createPipeline():
@@ -103,7 +110,7 @@ def createPipeline():
     )
 
     data = data.padded_batch(
-        2, padded_shapes=(([75, None, None, None], [75, None, None, None]), [40])
+        2, padded_shapes=([75, None, None, None], [40])
     )
 
     data = data.prefetch(

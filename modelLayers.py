@@ -36,11 +36,10 @@ class CTCLoss(tf.keras.losses.Loss):
 class ModelLipRead(tf.keras.models.Model):
     def __init__(self, input_shape):
         super(ModelLipRead, self).__init__()
-        self.input_layer_1 = Input(shape=input_shape)
-        self.input_layer_2 = Input(shape=input_shape)
+        self.input_layer = Input(shape=input_shape)
         self.layers_names = []
 
-        for i, filters_size in enumerate([64, 256, 75]):
+        for i, filters_size in enumerate([128, 256, 75]):
             names = [
                 f'{name}_{i + 1}' for name in ['conv', 'act', 'pool']
             ]
@@ -67,9 +66,6 @@ class ModelLipRead(tf.keras.models.Model):
                 )
             )
             self.layers_names += names
-            if i == 0:
-                self.marge = layers.Concatenate()
-                self.layers_names += ['marge']
 
         self.flt = layers.TimeDistributed(
             layers.Flatten(), name='flt'
@@ -106,26 +102,168 @@ class ModelLipRead(tf.keras.models.Model):
             'dense'
         ]
 
-        self.output_layer = self.call((self.input_layer_1, self.input_layer_2))
+        self.output_layer = self.call(self.input_layer)
         super(ModelLipRead, self).__init__(
-            inputs=(self.input_layer_1, self.input_layer_2),
+            inputs=self.input_layer,
+            outputs=self.output_layer
+        )
+
+    def call(self, x, training=False):
+
+        for layer_name in self.layers_names:
+            x = self.__getattribute__(layer_name)(x)
+
+        return x
+
+
+class ResnetBlock(tf.keras.layers.Layer):
+    def __init__(self, filters, down_sample=True, **kwargs):
+        super(ResnetBlock, self).__init__(**kwargs)
+        self.__filters = filters
+        self.__down_sample = down_sample
+        self.__kernel_size = (3, 3, 3)
+        self.__strides = [(1, 2, 2), (1, 1, 1)] if down_sample else [(1, 1, 1), (1, 1, 1)]
+        self.__kernel_initializer = "he_normal"
+
+        self.identity_layers_names = []
+        self.block_layers_names = []
+
+        self.conv_1 = layers.Conv3D(
+            filters=self.__filters, kernel_size=self.__kernel_size,
+            strides=self.__strides[0], padding='same',
+            kernel_initializer=self.__kernel_initializer
+        )
+        self.bn_1 = layers.BatchNormalization()
+        self.act_1 = layers.Activation(
+            activation='relu'
+        )
+        self.block_layers_names += [
+            'conv_1', 'bn_1', 'act_1'
+        ]
+
+        self.conv_2 = layers.Conv3D(
+            filters=self.__filters, kernel_size=self.__kernel_size,
+            strides=self.__strides[1], padding='same',
+            kernel_initializer=self.__kernel_initializer
+        )
+        self.bn_2 = layers.BatchNormalization()
+        self.block_layers_names += [
+            'conv_2', 'bn_2',
+        ]
+
+        self.marge = layers.Add()
+        self.out = layers.Activation(
+            activation='relu'
+        )
+        self.block_layers_names += [
+            'marge', 'out',
+        ]
+
+        if self.__down_sample:
+            self.identity_conv = layers.Conv3D(
+                filters=self.__filters, kernel_size=(1, 1, 1),
+                strides=self.__strides[0], padding='same',
+                kernel_initializer=self.__kernel_initializer
+            )
+            self.identity_bn = layers.BatchNormalization()
+            self.identity_layers_names += [
+                'identity_conv', 'identity_bn'
+            ]
+
+    def call(self, x):
+        identity = x
+        for layer_name in self.identity_layers_names:
+            identity = self.__getattribute__(layer_name)(identity)
+
+        for layer_name in self.block_layers_names:
+            if layer_name == 'marge':
+                x = self.__getattribute__(layer_name)([identity, x])
+                continue
+            x = self.__getattribute__(layer_name)(x)
+
+        return x
+
+
+class ModelResNet(tf.keras.models.Model):
+    def __init__(self, input_shape, res_net_layers=10, **kwargs):
+        super(ModelResNet, self).__init__(**kwargs)
+        self.input_layer = Input(shape=input_shape, name='Input')
+        self.layers_names = []
+
+        self.conv = layers.Conv3D(
+            filters=64, kernel_size=(1, 7, 7), padding='same', strides=(1, 1, 2),
+            input_shape=input_shape, kernel_initializer="he_normal", name='conv'
+        )
+        self.bn = layers.BatchNormalization(name='bn')
+        self.max_pool = layers.MaxPool3D(
+            pool_size=(1, 3, 3), padding='same', strides=(1, 1, 1), name='max_pool'
+        )
+        self.layers_names += [
+            'conv', 'bn', 'max_pool'
+        ]
+        down_sample_cond = [False] if res_net_layers == 10 else [False, False]
+
+        for block_n, filters in enumerate([64, 128, 256, 512]):
+
+            for i, sample in enumerate(down_sample_cond):
+                name = f'block{block_n + 1}_{i + 1}'
+                self.__setattr__(
+                    name,
+                    ResnetBlock(
+                        filters=filters, down_sample=sample, name=name
+                    )
+                )
+                self.layers_names += [name]
+            down_sample_cond[0] = True
+
+        self.avg = layers.AveragePooling3D(
+            pool_size=(1, 7, 7), padding='same', name='avg'
+        )
+        self.flatten = layers.TimeDistributed(
+            layers.Flatten(), name='flatten'
+        )
+        self.layers_names += [
+            'avg', 'flatten'
+        ]
+
+        for i in range(2):
+            names = [f'lstm_{i + 1}', f'drop_{i + 1}']
+            self.__setattr__(
+                names[0],
+                layers.Bidirectional(
+                    layers.LSTM(
+                        128, kernel_initializer='Orthogonal', return_sequences=True
+                    ), name=names[0]
+                )
+            )
+            self.__setattr__(
+                names[1],
+                layers.Dropout(
+                    0.5, name=names[1]
+                )
+            )
+            self.layers_names += names
+
+        self.dense = layers.Dense(
+            char2num.vocabulary_size() + 1, kernel_initializer='he_normal',
+            activation='softmax', name='dense'
+        )
+
+        self.layers_names += [
+            'dense'
+        ]
+
+        self.output_layer = self.call(self.input_layer)
+
+        super(ModelResNet, self).__init__(
+            inputs=self.input_layer,
             outputs=self.output_layer
         )
 
     def call(self, inputs, training=False):
-        inputs = list(inputs)
-        mrg = False
-        x = None
+        x = inputs
         for layer_name in self.layers_names:
-            if mrg:
-                x = self.__getattribute__(layer_name)(x)
-            elif layer_name == 'marge':
-                x = self.__getattribute__(layer_name)(inputs)
-                mrg = True
-            else:
-                lay = self.__getattribute__(layer_name)
-                inputs = [lay(inp) for inp in inputs]
-
+            x = self.__getattribute__(layer_name)(x)
         return x
 
 

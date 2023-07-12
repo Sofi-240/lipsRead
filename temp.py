@@ -1,7 +1,7 @@
 from server import createPipeline, num2char
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
-from modelLayers import ModelLipRead, CTCLoss, ModelCallback, scheduler
+from modelLayers import ModelLipRead, CTCLoss, ModelCallback, scheduler, ModelResNet
 import os
 import tensorflow as tf
 
@@ -12,14 +12,14 @@ train = data.take(450)
 validation = data.skip(450)
 
 
-input_shape = data.as_numpy_iterator().next()[0][0][0].shape
+input_shape = data.as_numpy_iterator().next()[0][0].shape
 
 
-# model = ModelLipRead(input_shape)
-#
-# model.summary()
-#
-#
+model = ModelResNet(input_shape)
+
+model.summary()
+
+
 # model.compile(
 #     optimizer=Adam(learning_rate=0.001), loss=CTCLoss()
 # )
