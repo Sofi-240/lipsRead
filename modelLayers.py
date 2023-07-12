@@ -1,7 +1,8 @@
 import tensorflow as tf
 from keras import layers, Input
-from server import char2num
+from server import char2num, num2char
 import pandas as pd
+from fuzzywuzzy import fuzz
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -31,6 +32,49 @@ class CTCLoss(tf.keras.losses.Loss):
             y_true=y_true, y_pred=y_pred, input_length=input_size, label_length=label_size
         )
         return loss
+
+
+class FuzzySimilarity(tf.keras.metrics.Metric):
+    def __init__(self, name='FuzzySimilarity', **kwargs):
+        super(FuzzySimilarity, self).__init__(name=name, **kwargs)
+        self.total = self.add_weight(
+            name="total", initializer="zeros"
+        )
+        self.count = self.add_weight(
+            name="count", initializer="zeros"
+        )
+
+    @staticmethod
+    def update_state_np(y_true, y_pred):
+        decoded = tf.keras.backend.ctc_decode(
+            y_pred, [y_pred.shape[1]] * y_pred.shape[0], greedy=False
+        )[0][0].numpy()
+        y_true_str = [
+            tf.strings.reduce_join(num2char(y)).numpy().decode('utf-8') for y in y_true
+        ]
+        y_pred_str = [
+            tf.strings.reduce_join(num2char(y)).numpy().decode('utf-8') for y in decoded
+        ]
+        sim = [
+            fuzz.ratio(yt, yp) / 100 for yt, yp in zip(y_true_str, y_pred_str)
+        ]
+        return sum(sim) / 2
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        sim = tf.py_function(
+            self.update_state_np, [y_true, y_pred], tf.float32
+        )
+        self.total.assign_add(tf.cast(
+            sim, self._dtype
+        ))
+        self.count.assign_add(
+            tf.cast(
+                1, self._dtype
+            )
+        )
+
+    def result(self):
+        return tf.math.divide(self.total, self.count)
 
 
 class ModelLipRead(tf.keras.models.Model):
@@ -270,17 +314,6 @@ class ModelResNet(tf.keras.models.Model):
 class ModelCallback(tf.keras.callbacks.Callback):
     def __init__(self):
         super(ModelCallback, self).__init__()
-        self.df = pd.DataFrame(
-            columns=[
-                'epoch', 'loss', 'lr'
-            ]
-        )
-
-    def on_epoch_end(self, epoch, logs=None):
-        optimizer = self.model.optimizer
-        lr = tf.keras.backend.eval(optimizer.lr)
-        self.df.loc[epoch, :] = [epoch + 1, logs['loss'], lr]
-        print("\nEnd epoch {}| loss: {} | lr: {}".format(epoch, logs['loss'], lr))
 
 
 def scheduler(epoch, lr):
