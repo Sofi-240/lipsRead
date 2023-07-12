@@ -3,7 +3,7 @@ import cv2
 import tensorflow as tf
 from preprocessing import cropByMouth, opticalFlowFeature
 
-vocab = [x for x in "abcdefghijklmnopqrstuvwxyz'?!123456789 "]
+vocab = list("abcdefghijklmnopqrstuvwxyz'?!123456789 ")
 char2num = tf.keras.layers.StringLookup(
     vocabulary=vocab, oov_token=""
 )
@@ -76,17 +76,23 @@ def mapData(path):
     return (ret[0], ret[1]), ret[-1]
 
 
-def reduceJoin(alignments):
-    ret = tf.strings.reduce_join(
-        [bytes.decode(x) for x in num2char(alignments.numpy()).numpy()]
-    )
-    return ret
-
-
 def createPipeline():
-    data = tf.data.Dataset.list_files(
-        './data/s1/*.mpg'
+    def map_dir(txt):
+        if txt.split('.')[-1] == 'mpg':
+            return True
+        return False
+
+    files = os.listdir(
+        './data/s1/'
     )
+
+    files = list(
+        filter(
+            map_dir, files
+        )
+    )
+
+    data = tf.data.Dataset.from_tensor_slices(files)
 
     data = data.shuffle(
         500, reshuffle_each_iteration=False

@@ -1,6 +1,7 @@
 import tensorflow as tf
 from keras import layers, Input
-from server import char2num, num2char, reduceJoin
+from server import char2num
+import pandas as pd
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -30,20 +31,6 @@ class CTCLoss(tf.keras.losses.Loss):
             y_true=y_true, y_pred=y_pred, input_length=input_size, label_length=label_size
         )
         return loss
-
-
-class ModelAccuracy(tf.keras.metrics.Metric):
-    def __init__(self):
-        super(ModelAccuracy, self).__init__()
-
-    def update_state(self, y_true, y_pred):
-        return
-
-    def reset_state(self):
-        return
-
-    def result(self):
-        return
 
 
 class ModelLipRead(tf.keras.models.Model):
@@ -145,62 +132,17 @@ class ModelLipRead(tf.keras.models.Model):
 class ModelCallback(tf.keras.callbacks.Callback):
     def __init__(self):
         super(ModelCallback, self).__init__()
-
-    def on_train_begin(self, logs=None):
-        keys = list(logs.keys())
-        print("Starting training; got log keys: {}".format(keys))
-
-    def on_train_end(self, logs=None):
-        keys = list(logs.keys())
-        print("Stop training; got log keys: {}".format(keys))
-
-    def on_epoch_begin(self, epoch, logs=None):
-        keys = list(logs.keys())
-        print("Start epoch {} of training; got log keys: {}".format(epoch, keys))
+        self.df = pd.DataFrame(
+            columns=[
+                'epoch', 'loss', 'lr'
+            ]
+        )
 
     def on_epoch_end(self, epoch, logs=None):
-        keys = list(logs.keys())
-        print("End epoch {} of training; got log keys: {}".format(epoch, keys))
-
-    def on_test_begin(self, logs=None):
-        keys = list(logs.keys())
-        print("Start testing; got log keys: {}".format(keys))
-
-    def on_test_end(self, logs=None):
-        keys = list(logs.keys())
-        print("Stop testing; got log keys: {}".format(keys))
-
-    def on_predict_begin(self, logs=None):
-        keys = list(logs.keys())
-        print("Start predicting; got log keys: {}".format(keys))
-
-    def on_predict_end(self, logs=None):
-        keys = list(logs.keys())
-        print("Stop predicting; got log keys: {}".format(keys))
-
-    def on_train_batch_begin(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Training: start of batch {}; got log keys: {}".format(batch, keys))
-
-    def on_train_batch_end(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Training: end of batch {}; got log keys: {}".format(batch, keys))
-
-    def on_test_batch_begin(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Evaluating: start of batch {}; got log keys: {}".format(batch, keys))
-
-    def on_test_batch_end(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Evaluating: end of batch {}; got log keys: {}".format(batch, keys))
-
-    def on_predict_batch_begin(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Predicting: start of batch {}; got log keys: {}".format(batch, keys))
-
-    def on_predict_batch_end(self, batch, logs=None):
-        keys = list(logs.keys())
-        print("...Predicting: end of batch {}; got log keys: {}".format(batch, keys))
+        optimizer = self.model.optimizer
+        lr = tf.keras.backend.eval(optimizer.lr)
+        self.df.loc[epoch, :] = [epoch + 1, logs['loss'], lr]
+        print("\nEnd epoch {}| loss: {} | lr: {}".format(epoch, logs['loss'], lr))
 
 
 def scheduler(epoch, lr):
