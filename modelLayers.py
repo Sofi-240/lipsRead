@@ -64,9 +64,11 @@ class FuzzySimilarity(tf.keras.metrics.Metric):
         sim = tf.py_function(
             self.update_state_np, [y_true, y_pred], tf.float32
         )
-        self.total.assign_add(tf.cast(
-            sim, self._dtype
-        ))
+        self.total.assign_add(
+            tf.cast(
+                sim, self._dtype
+            )
+        )
         self.count.assign_add(
             tf.cast(
                 1, self._dtype
@@ -315,9 +317,13 @@ class ModelCallback(tf.keras.callbacks.Callback):
     def __init__(self):
         super(ModelCallback, self).__init__()
 
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch > 30 and (epoch % 5) == 0:
+            lr = float(
+                tf.keras.backend.get_value(self.model.optimizer.lr)
+            )
+            tf.keras.backend.set_value(
+                self.model.optimizer.lr, lr * tf.math.exp(-0.1)
+            )
 
-def scheduler(epoch, lr):
-    if epoch < 30:
-        return lr
-    else:
-        return lr * tf.math.exp(-0.1)
+

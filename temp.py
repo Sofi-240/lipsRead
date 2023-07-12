@@ -26,11 +26,6 @@ model.compile(
 checkpoint_callback = ModelCheckpoint(
     os.path.join('models', 'checkpoint'), monitor='loss', save_weights_only=True
 )
-
-schedule_callback = LearningRateScheduler(
-    scheduler
-)
-
 sample = iter(test).next()
 y_pred = model.predict(sample[0])
 
@@ -48,5 +43,5 @@ f.update_state(sample[1], tf.convert_to_tensor(y_pred))
 
 # model.fit(
 #     train, validation_data=validation, epochs=1,
-#     callbacks=[checkpoint_callback, schedule_callback, ModelCallback()]
+#     callbacks=[checkpoint_callback, ModelCallback()]
 # )
