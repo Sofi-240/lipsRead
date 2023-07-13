@@ -1,7 +1,6 @@
 import os
 import cv2
 import tensorflow as tf
-from preprocessing import cropByMouth
 
 vocab = list("abcdefghijklmnopqrstuvwxyz'?!123456789 ")
 char2num = tf.keras.layers.StringLookup(
@@ -29,19 +28,7 @@ def loadVideo(path):
     frames = tf.cast(
         frames, tf.float32
     )
-    _, crop_frames_gray = cropByMouth(frames)
-    crop_frames = tf.image.resize(
-        crop_frames_gray, [56, 112], method='bicubic'
-    )
-    mean = tf.math.reduce_mean(crop_frames)
-    std = tf.math.reduce_std(
-        tf.cast(
-            crop_frames, tf.float32
-        )
-    )
-    return tf.cast(
-        (crop_frames - mean), tf.float32
-    ) / std
+    return frames
 
 
 def loadAlignments(path):
@@ -102,7 +89,7 @@ def createPipeline():
     data = tf.data.Dataset.from_tensor_slices(files)
 
     data = data.shuffle(
-        500, reshuffle_each_iteration=False
+        len(files), reshuffle_each_iteration=False
     )
 
     data = data.map(

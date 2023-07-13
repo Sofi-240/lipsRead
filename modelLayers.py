@@ -3,6 +3,8 @@ from keras import layers, Input
 from server import char2num, num2char
 from fuzzywuzzy import fuzz
 import numpy as np
+import cv2
+import random
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -153,16 +155,20 @@ class ModelResNet(tf.keras.models.Model):
         self.input_layer = Input(shape=input_shape, name='Input')
         self.layers_names = []
 
+        self.prep = ModelPreprocessing(
+            input_shape=input_shape, name='prep', height=56, width=112
+        )
+
         self.conv = layers.Conv3D(
             filters=64, kernel_size=(1, 7, 7), padding='same', strides=(1, 1, 2),
-            input_shape=input_shape, kernel_initializer="he_normal", name='conv'
+            kernel_initializer="he_normal", name='conv'
         )
         self.bn = layers.BatchNormalization(name='bn')
         self.max_pool = layers.MaxPool3D(
             pool_size=(1, 3, 3), padding='same', strides=(1, 1, 1), name='max_pool'
         )
         self.layers_names += [
-            'conv', 'bn', 'max_pool'
+            'prep', 'conv', 'bn', 'max_pool'
         ]
         down_sample_cond = [False] if res_net_layers == 10 else [False, False]
 
@@ -223,8 +229,7 @@ class ModelResNet(tf.keras.models.Model):
             outputs=self.output_layer
         )
 
-    def call(self, inputs, training=False):
-        x = inputs
+    def call(self, x):
         for layer_name in self.layers_names:
             x = self.__getattribute__(layer_name)(x)
         return x
@@ -303,3 +308,260 @@ class ModelCallback(tf.keras.callbacks.Callback):
                 self.model.stop_training = True
 
 
+class ModelPreprocessing(tf.keras.layers.Layer):
+    def __init__(self, input_shape, height, width, **kwargs):
+        super(ModelPreprocessing, self).__init__(**kwargs)
+        self._out_height = height
+        self._out_width = width
+        self._out_dim = 1
+        self._output_shape = (None, input_shape[1], self._out_height, self._out_width, 1)
+        self.resize = layers.Resizing(
+            height=self._out_height, width=self._out_width,
+            interpolation='bicubic', name='resize'
+        )
+        self.rescale = layers.Rescaling(
+            scale=1. / 255, name='rescale'
+        )
+
+    def call(self, x):
+        if x.shape[0] is None:
+            x = tf.image.rgb_to_grayscale(x)
+            return tf.keras.layers.TimeDistributed(
+                self.resize
+            )(x)
+
+        x = tf.py_function(
+            self._preprocessing, [x], x.dtype
+        )
+
+        x = self.rescale(
+            x
+        )
+        return x
+
+    def _preprocessing(self, X):
+        out = np.zeros(
+            self._output_shape
+        )
+        for i, x in enumerate(X):
+            x = self._back_crop(
+                x.numpy()
+            )
+            out[i] = x
+        return tf.cast(
+            out, dtype=X.dtype
+        )
+
+    def _back_crop(self, x):
+        image_median = np.median(
+            x, axis=0
+        )
+
+        image_hsv = cv2.cvtColor(
+            image_median, cv2.COLOR_RGB2HSV
+        )
+
+        threshold, image_bin = cv2.threshold(
+            image_hsv[:, :, 0].astype(np.uint8), 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+
+        kernel = np.ones(
+            (5, 5), dtype=np.uint8
+        )
+
+        image_bin = cv2.morphologyEx(
+            image_bin, cv2.MORPH_OPEN, kernel, iterations=1
+        )
+
+        r, c = np.where(
+            image_bin == 1
+        )
+
+        boundary = [
+            [
+                c.min(), min([image_median.shape[1] - 1, c.max()])
+            ],
+            [
+                r.min(), min([image_median.shape[0] - 1, r.max()])
+            ],
+        ]
+
+        gray_frames_crop = tf.image.rgb_to_grayscale(
+            x[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
+        ).numpy()
+        return self._face_crop(gray_frames_crop)
+
+    def _face_crop(self, x):
+        image_median = np.median(
+            x, axis=0
+        )
+        face = faceCascade(
+            contrast_stretch(image_median)
+        )
+
+        face_prop = [
+            face[0][1] - face[0][0],
+            face[1][1] - face[1][0]
+        ]
+
+        sample_index = random.sample(
+            list(
+                range(x.shape[0])
+            ), 10
+        )
+
+        for smp in sample_index:
+            curr_frame = contrast_stretch(
+                x[smp, :, :, :]
+            )
+            curr_face = faceCascade(
+                curr_frame
+            )
+            curr_prop = [
+                curr_face[0][1] - curr_face[0][0],
+                curr_face[1][1] - curr_face[1][0]
+            ]
+
+            if (curr_face[0][0] > 0 and curr_face[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > face_prop[0]) or (
+                    face_prop[0] == curr_frame.shape[1] - 1):
+                face[0] = curr_face[0]
+                face_prop[0] = curr_prop[0]
+
+            if (curr_face[1][0] > 0 and curr_face[1][1] < curr_frame.shape[0] - 1 and curr_prop[1] > face_prop[1]) or (
+                    face_prop[1] == curr_frame.shape[0] - 1):
+                face[1] = curr_face[1]
+                face_prop[1] = curr_prop[1]
+
+        gray_frames_crop = x[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :]
+        return self._mouth_crop(gray_frames_crop)
+
+    def _mouth_crop(self, x):
+        image_median = np.median(
+            x, axis=0
+        )
+
+        mouth = mouthCascade(
+            contrast_stretch(image_median)
+        )
+
+        mouth_prop = [
+            mouth[0][1] - mouth[0][0],
+            mouth[1][1] - mouth[1][0]
+        ]
+
+        sample_index = random.sample(
+            list(
+                range(x.shape[0])
+            ), 10
+        )
+
+        for smp in sample_index:
+            curr_frame = contrast_stretch(
+                x[smp, :, :, :]
+            )
+            curr_mouth = mouthCascade(
+                curr_frame
+            )
+            curr_prop = [
+                curr_mouth[0][1] - curr_mouth[0][0],
+                curr_mouth[1][1] - curr_mouth[1][0]
+            ]
+
+            if (curr_mouth[0][0] > 0 and curr_mouth[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > mouth_prop[
+                0]) or (
+                    mouth_prop[0] == curr_frame.shape[1] - 1):
+                mouth[0] = curr_mouth[0]
+                mouth_prop[0] = curr_prop[0]
+
+            if (curr_mouth[1][0] > curr_frame.shape[0] // 2 and curr_prop[1] > mouth_prop[1]) or (
+                    mouth_prop[1] == (curr_frame.shape[0] // 2) - 1):
+                mouth[1] = curr_mouth[1]
+                mouth_prop[1] = curr_prop[1]
+
+        gray_frames_crop = x[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
+        return self.resize(gray_frames_crop).numpy()
+
+
+def contrast_stretch(img_gray):
+    div = img_gray.max() - img_gray.min()
+    if div == 0:
+        return img_gray
+    img_gray = 255 * (
+            (img_gray - img_gray.min()) / div
+    )
+    return img_gray
+
+
+def faceCascade(img_gray):
+    cascade = cv2.CascadeClassifier(
+        "data\\haarcascade_frontalface_default.xml"
+    )
+
+    rect = cascade.detectMultiScale(
+        img_gray.astype(np.uint8)
+    )
+
+    if type(rect) == tuple:
+        bound = [
+            [
+                0, img_gray.shape[1] - 1
+            ],
+            [
+                0, img_gray.shape[0] - 1
+            ]
+        ]
+        return bound
+    bound = [
+        [
+            rect[0, 0], min([img_gray.shape[1] - 1, rect[0, 0] + rect[0, 2]])
+        ],
+        [
+            rect[0, 1], min([img_gray.shape[0] - 1, rect[0, 1] + rect[0, 3] + 10])
+        ],
+    ]
+    return bound
+
+
+def mouthCascade(img_gray):
+    cascade = cv2.CascadeClassifier(
+        "data\\haarcascade_mcs_mouth.xml"
+    )
+
+    rect = cascade.detectMultiScale(
+        img_gray.astype(np.uint8), 1.4
+    )
+
+    mid = img_gray.shape[0] // 2
+
+    bound = [
+        [
+            0, img_gray.shape[1] - 1
+        ],
+        [
+            mid, img_gray.shape[0] - 1
+        ]
+    ]
+
+    if type(rect) == tuple:
+        return bound
+
+    rect = rect[rect[:, 1] > mid, :]
+
+    if rect.shape[0] == 0:
+        return bound
+
+    if rect.shape[0] > 1:
+        indices = np.argsort(rect[:, 2])[::-1]
+        rect = np.reshape(
+            rect[indices[0], :], (1, 4)
+        )
+
+    bound = [
+        [
+            max([0, rect[0, 0] - 10]), min([img_gray.shape[1] - 1, rect[0, 0] + rect[0, 2] + 10])
+        ],
+        [
+            max([mid, rect[0, 1] - 10]), min([img_gray.shape[0] - 1, rect[0, 1] + rect[0, 3] + 10])
+        ],
+    ]
+    return bound

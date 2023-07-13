@@ -1,22 +1,35 @@
 from server import createPipeline, num2char
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
-from modelLayers import CTCLoss, ModelCallback, ModelResNet, FuzzySimilarity
+from modelLayers import CTCLoss, ModelCallback, ModelResNet, FuzzySimilarity, ModelPreprocessing
 import os
 import tensorflow as tf
-
+from keras.layers import Input
 
 # data = createPipeline()
+#
+# validation_size = int(0.1 * len(data))
+#
+# test_size = int(0.1 * len(data))
+#
+# test = data.take(test_size + validation_size)
+# validation = test.take(validation_size)
+# test = test.skip(validation_size)
+# train = data.skip(test_size + validation_size)
+#
+#
+# prep = ModelPreprocessing(input_shape=(75, 288, 360, 3), height=56, width=112)
+#
+# sample = next(iter(data))
+#
+# i = Input(sample[0][0].shape)
+# ret = prep.call(i)
 
-# train = data.take(2)
-# test = data.skip(2)
-# validation = test.take(2)
-#
 # input_shape = data.as_numpy_iterator().next()[0][0].shape
-# model = ModelResNet(input_shape)
-#
-# model.summary()
-#
+model = ModelResNet((75, 288, 360, 3))
+
+model.summary()
+
 # model.compile(
 #     optimizer=Adam(learning_rate=0.001), loss=CTCLoss(), metrics=[FuzzySimilarity()]
 # )
