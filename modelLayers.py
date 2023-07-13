@@ -135,7 +135,7 @@ class ResnetBlock(tf.keras.layers.Layer):
                 'identity_conv', 'identity_bn'
             ]
 
-    def call(self, x):
+    def call(self, x, training=False):
         identity = x
         for layer_name in self.identity_layers_names:
             identity = self.__getattribute__(layer_name)(identity)
@@ -229,7 +229,7 @@ class ModelResNet(tf.keras.models.Model):
             outputs=self.output_layer
         )
 
-    def call(self, x):
+    def call(self, x, training=False):
         for layer_name in self.layers_names:
             x = self.__getattribute__(layer_name)(x)
         return x
