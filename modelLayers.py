@@ -1,8 +1,8 @@
 import tensorflow as tf
 from keras import layers, Input
 from server import char2num, num2char
-import pandas as pd
 from fuzzywuzzy import fuzz
+import numpy as np
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -77,89 +77,6 @@ class FuzzySimilarity(tf.keras.metrics.Metric):
 
     def result(self):
         return tf.math.divide(self.total, self.count)
-
-
-class ModelLipRead(tf.keras.models.Model):
-    def __init__(self, input_shape):
-        super(ModelLipRead, self).__init__()
-        self.input_layer = Input(shape=input_shape)
-        self.layers_names = []
-
-        for i, filters_size in enumerate([128, 256, 75]):
-            names = [
-                f'{name}_{i + 1}' for name in ['conv', 'act', 'pool']
-            ]
-            self.__setattr__(
-                names[0],
-                layers.Conv3D(
-                    filters=filters_size, kernel_size=(3, 3, 3),
-                    padding='same', strides=(1, 1, 1),
-                    kernel_initializer="he_normal", name=names[0]
-                )
-            )
-            self.__setattr__(
-                names[1],
-                layers.Activation(
-                    activation='relu',
-                    name=names[1]
-                )
-            )
-            self.__setattr__(
-                names[2],
-                layers.MaxPool3D(
-                    pool_size=(1, 2, 2), padding='valid',
-                    name=names[2]
-                )
-            )
-            self.layers_names += names
-
-        self.flt = layers.TimeDistributed(
-            layers.Flatten(), name='flt'
-        )
-        self.layers_names += [
-            'flt'
-        ]
-
-        self.lstm_1 = layers.Bidirectional(
-            layers.LSTM(
-                128, kernel_initializer='Orthogonal', return_sequences=True
-            ), name='lstm_1'
-        )
-        self.drop_1 = layers.Dropout(0.5, name='drop_1')
-        self.layers_names += [
-            'lstm_1', 'drop_1'
-        ]
-
-        self.lstm_2 = layers.Bidirectional(
-            layers.LSTM(
-                128, kernel_initializer='Orthogonal', return_sequences=True,
-            ), name='lstm_2'
-        )
-        self.drop_2 = layers.Dropout(0.5, name='drop_2')
-        self.layers_names += [
-            'lstm_2', 'drop_2'
-        ]
-
-        self.dense = layers.Dense(
-            char2num.vocabulary_size() + 1, kernel_initializer='he_normal', activation='softmax',
-            name='dense'
-        )
-        self.layers_names += [
-            'dense'
-        ]
-
-        self.output_layer = self.call(self.input_layer)
-        super(ModelLipRead, self).__init__(
-            inputs=self.input_layer,
-            outputs=self.output_layer
-        )
-
-    def call(self, x, training=False):
-
-        for layer_name in self.layers_names:
-            x = self.__getattribute__(layer_name)(x)
-
-        return x
 
 
 class ResnetBlock(tf.keras.layers.Layer):
@@ -314,16 +231,75 @@ class ModelResNet(tf.keras.models.Model):
 
 
 class ModelCallback(tf.keras.callbacks.Callback):
-    def __init__(self):
+    def __init__(self, learning_rate_base=0.01, warmup_learning_rate=1e-7, warmup_steps_practice=0.1,
+                 global_step_init=0, fuzzy_patience=5):
         super(ModelCallback, self).__init__()
+        self.learning_rate_base = learning_rate_base
+        self.warmup_learning_rate = warmup_learning_rate
+        self.warmup_steps_practice = warmup_steps_practice
+        self.global_step = global_step_init
+        self.total_steps = None
+        self.warmup_steps = None
+        self.slope = None
+        self._built = False
+        self.fuzzy_patience = fuzzy_patience
+        self._best_fuzzy = 0
+        self._fuzzy_patience_wait = 0
+
+    def _build(self):
+        self.total_steps = int(
+            self.params['epochs'] * self.params['steps']
+        )
+        self.warmup_steps = int(
+            self.total_steps * self.warmup_steps_practice
+        )
+        self.slope = (self.learning_rate_base - self.warmup_learning_rate) / self.warmup_steps
+        self._built = True
+
+    def on_batch_end(self, batch, logs=None):
+        self.global_step = self.global_step + 1
+
+    def on_batch_begin(self, batch, logs=None):
+        if not self._built:
+            self._build()
+
+        if self.total_steps < self.warmup_steps:
+            raise ValueError(
+                'total_steps must be larger or equal to warmup_steps.'
+            )
+        if (self.warmup_steps > 0) and (self.learning_rate_base < self.warmup_learning_rate):
+            raise ValueError(
+                'learning_rate_base must be larger or equal to warmup_learning_rate.'
+            )
+
+        lr = 0.5 * self.learning_rate_base * (1 + np.cos(np.pi * (
+                (self.global_step - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+        )))
+
+        if self.warmup_steps > 0:
+            warmup_rate = self.slope * self.global_step + self.warmup_learning_rate
+            lr = np.where(
+                self.global_step < self.warmup_steps, warmup_rate, lr
+            )
+        lr = np.where(
+            self.global_step > self.total_steps, 0.0, lr
+        )
+        tf.keras.backend.set_value(
+            self.model.optimizer.lr, lr
+        )
 
     def on_epoch_end(self, epoch, logs=None):
-        if epoch > 30 and (epoch % 5) == 0:
-            lr = float(
-                tf.keras.backend.get_value(self.model.optimizer.lr)
-            )
-            tf.keras.backend.set_value(
-                self.model.optimizer.lr, lr * tf.math.exp(-0.1)
-            )
+        logs = logs or {}
+        logs['lr'] = float(
+            tf.keras.backend.get_value(self.model.optimizer.lr)
+        )
+        if logs.get('FuzzySimilarity') is not None:
+            fz = logs['FuzzySimilarity']
+            self._fuzzy_patience_wait += 1
+            if fz > self._best_fuzzy:
+                self._best_fuzzy = fz
+                self._fuzzy_patience_wait = 0
+            if self._fuzzy_patience_wait >= self.fuzzy_patience:
+                self.model.stop_training = True
 
 
