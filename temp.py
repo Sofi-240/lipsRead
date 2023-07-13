@@ -1,7 +1,7 @@
 from server import createPipeline, num2char
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
-from modelLayers import CTCLoss, ModelCallback, ModelResNet, FuzzySimilarity, ModelPreprocessing
+from modelLayers import CTCLoss, ModelCallback, ModelResNet, FuzzySimilarity, PreprocessingLayer
 import os
 import tensorflow as tf
 from keras.layers import Input

@@ -155,7 +155,7 @@ class ModelResNet(tf.keras.models.Model):
         self.input_layer = Input(shape=input_shape, name='Input')
         self.layers_names = []
 
-        self.prep = ModelPreprocessing(
+        self.prep = PreprocessingLayer(
             input_shape=input_shape, name='prep', height=56, width=112
         )
 
@@ -308,9 +308,9 @@ class ModelCallback(tf.keras.callbacks.Callback):
                 self.model.stop_training = True
 
 
-class ModelPreprocessing(tf.keras.layers.Layer):
+class PreprocessingLayer(tf.keras.layers.Layer):
     def __init__(self, input_shape, height, width, **kwargs):
-        super(ModelPreprocessing, self).__init__(**kwargs)
+        super(PreprocessingLayer, self).__init__(**kwargs)
         self._out_height = height
         self._out_width = width
         self._out_dim = 1
