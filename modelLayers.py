@@ -155,8 +155,8 @@ class LipsReadModel(tf.keras.models.Model):
         self.input_layer = Input(shape=input_shape, name='Input')
         self.layers_names = []
 
-        self.prep = PreprocessingLayer(
-            input_shape=input_shape, name='prep', height=56, width=112
+        self.preprocessing = PreprocessingLayer(
+            height=56, width=112, name='preprocessing'
         )
 
         self.conv = layers.Conv3D(
@@ -168,7 +168,7 @@ class LipsReadModel(tf.keras.models.Model):
             pool_size=(1, 3, 3), padding='same', strides=(1, 1, 1), name='max_pool'
         )
         self.layers_names += [
-            'prep', 'conv', 'bn', 'max_pool'
+            'preprocessing', 'conv', 'bn', 'max_pool'
         ]
         down_sample_cond = [False] if res_net_layers == 10 else [False, False]
 
@@ -309,187 +309,201 @@ class ModelCallback(tf.keras.callbacks.Callback):
 
 
 class PreprocessingLayer(tf.keras.layers.Layer):
-    def __init__(self, input_shape, height, width, **kwargs):
+    def __init__(self, height, width, **kwargs):
         super(PreprocessingLayer, self).__init__(**kwargs)
         self._out_height = height
         self._out_width = width
         self._out_dim = 1
-        self._output_shape = (None, input_shape[1], self._out_height, self._out_width, 1)
         self.resize = layers.Resizing(
             height=self._out_height, width=self._out_width,
             interpolation='bicubic', name='resize'
         )
-        self.rescale = layers.Rescaling(
-            scale=1. / 255, name='rescale'
+        self.rescale = tf.keras.layers.TimeDistributed(
+            layers.Rescaling(
+                scale=1. / 255
+            ), name='rescale'
         )
 
     def call(self, x):
         if x.shape[0] is None:
             x = tf.image.rgb_to_grayscale(x)
-            return tf.keras.layers.TimeDistributed(
+            x = tf.keras.layers.TimeDistributed(
                 self.resize
             )(x)
+            return self.rescale(x)
 
         x = tf.py_function(
-            self._preprocessing, [x], x.dtype
+            self._mouthSegmentation, [x], x.dtype
         )
 
-        x = self.rescale(
-            x
-        )
+        x = self.rescale(x)
         return x
 
-    def _preprocessing(self, X):
-        out = np.zeros(
-            self._output_shape
-        )
-        for i, x in enumerate(X):
-            x = self._back_crop(
-                x.numpy()
+    def _mouthSegmentation(self, frames):
+        _type = frames.dtype
+        if tf.is_tensor(frames) and frames.shape[0] is not None:
+            frames = frames.numpy()
+        if frames.shape[0] is None:
+            return
+        if not isinstance(frames, np.ndarray):
+            raise ValueError(
+                'frames isinstance need to be tensor or np.ndarray array'
             )
-            out[i] = x
-        return tf.cast(
-            out, dtype=X.dtype
+
+        _init_shape = frames.shape
+
+        if len(_init_shape) < 4:
+            raise ValueError(
+                'frames shape need to be 4D (without batches) or 5D (with batches)'
+            )
+        if _init_shape[-1] != 3:
+            raise ValueError(
+                'frames need to be in RGB format'
+            )
+        if len(_init_shape) < 5:
+            frames = np.expand_dims(
+                frames, axis=0
+            )
+
+        _init_shape = frames.shape
+
+        bg_crop = []
+        face_crop = []
+        mouth_crop = np.zeros(
+            (*_init_shape[:2], self._out_height, self._out_width, 1)
         )
 
-    def _back_crop(self, x):
-        image_median = np.median(
-            x, axis=0
+        frames_median_rgb = np.median(
+            frames, axis=1
         )
 
-        image_hsv = cv2.cvtColor(
-            image_median, cv2.COLOR_RGB2HSV
-        )
+        for b, image_median in enumerate(frames_median_rgb):
+            image_hsv = cv2.cvtColor(
+                image_median, cv2.COLOR_RGB2HSV
+            )
 
-        threshold, image_bin = cv2.threshold(
-            image_hsv[:, :, 0].astype(np.uint8), 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )
+            threshold, image_bin = cv2.threshold(
+                image_hsv[:, :, 0].astype(np.uint8),
+                0, 1,
+                cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+            )
 
-        kernel = np.ones(
-            (5, 5), dtype=np.uint8
-        )
+            kernel = np.ones(
+                (5, 5), dtype=np.uint8
+            )
 
-        image_bin = cv2.morphologyEx(
-            image_bin, cv2.MORPH_OPEN, kernel, iterations=1
-        )
+            image_bin = cv2.morphologyEx(
+                image_bin, cv2.MORPH_OPEN, kernel, iterations=1
+            )
 
-        r, c = np.where(
-            image_bin == 1
-        )
+            points = cv2.findNonZero(image_bin)
+            if points is None:
+                bg_crop.append(frames[b])
+                continue
 
-        boundary = [
-            [
-                c.min(), min([image_median.shape[1] - 1, c.max()])
-            ],
-            [
-                r.min(), min([image_median.shape[0] - 1, r.max()])
-            ],
-        ]
+            rect = cv2.boundingRect(points)
 
-        gray_frames_crop = tf.image.rgb_to_grayscale(
-            x[:, boundary[1][0]:boundary[1][1], boundary[0][0]:boundary[0][1], :]
-        ).numpy()
-        return self._face_crop(gray_frames_crop)
+            crop_frames = tf.image.crop_to_bounding_box(
+                frames[b],
+                offset_width=rect[0], offset_height=rect[1],
+                target_width=rect[2], target_height=rect[3]
+            )
 
-    def _face_crop(self, x):
-        image_median = np.median(
-            x, axis=0
-        )
-        face = faceCascade(
-            contrast_stretch(image_median)
-        )
+            crop_frames = tf.image.rgb_to_grayscale(
+                crop_frames
+            )
 
-        face_prop = [
-            face[0][1] - face[0][0],
-            face[1][1] - face[1][0]
-        ]
+            crop_frames = tf.image.adjust_contrast(
+                crop_frames, 1
+            ).numpy()
+
+            bg_crop.append(
+                crop_frames
+            )
 
         sample_index = random.sample(
             list(
-                range(x.shape[0])
-            ), 10
+                range(bg_crop[0].shape[0])
+            ), 4
         )
 
-        for smp in sample_index:
-            curr_frame = contrast_stretch(
-                x[smp, :, :, :]
-            )
-            curr_face = faceCascade(
-                curr_frame
-            )
-            curr_prop = [
-                curr_face[0][1] - curr_face[0][0],
-                curr_face[1][1] - curr_face[1][0]
+        for crop_frames in bg_crop:
+            crop_median = np.median(
+                crop_frames, axis=0
+            ).astype(np.uint8)
+
+            face = faceCascade(crop_median)
+            face_prop = [
+                face[0][1] - face[0][0],
+                face[1][1] - face[1][0]
             ]
 
-            if (curr_face[0][0] > 0 and curr_face[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > face_prop[0]) or (
-                    face_prop[0] == curr_frame.shape[1] - 1):
-                face[0] = curr_face[0]
-                face_prop[0] = curr_prop[0]
+            for smpl in sample_index:
+                curr_frame = crop_frames[smpl]
 
-            if (curr_face[1][0] > 0 and curr_face[1][1] < curr_frame.shape[0] - 1 and curr_prop[1] > face_prop[1]) or (
-                    face_prop[1] == curr_frame.shape[0] - 1):
-                face[1] = curr_face[1]
-                face_prop[1] = curr_prop[1]
+                curr_face = faceCascade(curr_frame)
+                curr_prop = [
+                    curr_face[0][1] - curr_face[0][0],
+                    curr_face[1][1] - curr_face[1][0]
+                ]
+                if (curr_face[0][0] > 0 and curr_face[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > face_prop[
+                    0]) or (
+                        face_prop[0] == curr_frame.shape[1] - 1):
+                    face[0] = curr_face[0]
+                    face_prop[0] = curr_prop[0]
 
-        gray_frames_crop = x[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :]
-        return self._mouth_crop(gray_frames_crop)
+                if (curr_face[1][0] > 0 and curr_face[1][1] < curr_frame.shape[0] - 1 and curr_prop[1] > face_prop[
+                    1]) or (
+                        face_prop[1] == curr_frame.shape[0] - 1):
+                    face[1] = curr_face[1]
+                    face_prop[1] = curr_prop[1]
 
-    def _mouth_crop(self, x):
-        image_median = np.median(
-            x, axis=0
-        )
-
-        mouth = mouthCascade(
-            contrast_stretch(image_median)
-        )
-
-        mouth_prop = [
-            mouth[0][1] - mouth[0][0],
-            mouth[1][1] - mouth[1][0]
-        ]
+            face_crop.append(
+                (
+                    crop_frames[:, face[1][0]:face[1][1], face[0][0]:face[0][1], :],
+                    crop_median[face[1][0]:face[1][1], face[0][0]:face[0][1], :]
+                )
+            )
 
         sample_index = random.sample(
             list(
-                range(x.shape[0])
-            ), 10
+                range(bg_crop[0].shape[0])
+            ), 4
         )
 
-        for smp in sample_index:
-            curr_frame = contrast_stretch(
-                x[smp, :, :, :]
-            )
-            curr_mouth = mouthCascade(
-                curr_frame
-            )
-            curr_prop = [
-                curr_mouth[0][1] - curr_mouth[0][0],
-                curr_mouth[1][1] - curr_mouth[1][0]
+        for b, crop in enumerate(face_crop):
+            crop_frames, crop_median = crop
+            mouth = mouthCascade(crop_median)
+            mouth_prop = [
+                mouth[0][1] - mouth[0][0],
+                mouth[1][1] - mouth[1][0]
             ]
 
-            if (curr_mouth[0][0] > 0 and curr_mouth[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > mouth_prop[
-                0]) or (
-                    mouth_prop[0] == curr_frame.shape[1] - 1):
-                mouth[0] = curr_mouth[0]
-                mouth_prop[0] = curr_prop[0]
+            for smpl in sample_index:
+                curr_frame = crop_frames[smpl]
 
-            if (curr_mouth[1][0] > curr_frame.shape[0] // 2 and curr_prop[1] > mouth_prop[1]) or (
-                    mouth_prop[1] == (curr_frame.shape[0] // 2) - 1):
-                mouth[1] = curr_mouth[1]
-                mouth_prop[1] = curr_prop[1]
+                curr_mouth = mouthCascade(curr_frame)
+                curr_prop = [
+                    curr_mouth[0][1] - curr_mouth[0][0],
+                    curr_mouth[1][1] - curr_mouth[1][0]
+                ]
 
-        gray_frames_crop = x[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
-        return self.resize(gray_frames_crop).numpy()
+                if (curr_mouth[0][0] > 0 and curr_mouth[0][1] < curr_frame.shape[1] - 1 and curr_prop[0] > mouth_prop[
+                    0]) or (
+                        mouth_prop[0] == curr_frame.shape[1] - 1):
+                    mouth[0] = curr_mouth[0]
+                    mouth_prop[0] = curr_prop[0]
 
+                if (curr_mouth[1][0] > curr_frame.shape[0] // 2 and curr_prop[1] > mouth_prop[1]) or (
+                        mouth_prop[1] == (curr_frame.shape[0] // 2) - 1):
+                    mouth[1] = curr_mouth[1]
+                    mouth_prop[1] = curr_prop[1]
 
-def contrast_stretch(img_gray):
-    div = img_gray.max() - img_gray.min()
-    if div == 0:
-        return img_gray
-    img_gray = 255 * (
-            (img_gray - img_gray.min()) / div
-    )
-    return img_gray
+            crop_frames = crop_frames[:, mouth[1][0]:mouth[1][1], mouth[0][0]:mouth[0][1], :]
+            mouth_crop[b] = tf.cast(
+                self.resize(crop_frames), dtype=_type
+            )
+        return mouth_crop
 
 
 def faceCascade(img_gray):
