@@ -224,7 +224,7 @@ class LipsReadModel(tf.keras.models.Model):
 
         self.output_layer = self.call(self.input_layer)
 
-        super(ModelResNet, self).__init__(
+        super(LipsReadModel, self).__init__(
             inputs=self.input_layer,
             outputs=self.output_layer
         )
