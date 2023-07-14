@@ -1,7 +1,7 @@
 from server import createPipeline, num2char
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
-from modelLayers import CTCLoss, ModelCallback, ModelResNet, FuzzySimilarity, PreprocessingLayer
+from modelLayers import CTCLoss, ModelCallback, LipsReadModel, FuzzySimilarity, PreprocessingLayer
 import os
 import tensorflow as tf
 from keras.layers import Input
@@ -26,7 +26,7 @@ from keras.layers import Input
 # ret = prep.call(i)
 
 # input_shape = data.as_numpy_iterator().next()[0][0].shape
-model = ModelResNet((75, 288, 360, 3))
+model = LipsReadModel((75, 288, 360, 3))
 
 model.summary()
 

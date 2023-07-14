@@ -149,9 +149,9 @@ class ResnetBlock(tf.keras.layers.Layer):
         return x
 
 
-class ModelResNet(tf.keras.models.Model):
+class LipsReadModel(tf.keras.models.Model):
     def __init__(self, input_shape, res_net_layers=10, **kwargs):
-        super(ModelResNet, self).__init__(**kwargs)
+        super(LipsReadModel, self).__init__(**kwargs)
         self.input_layer = Input(shape=input_shape, name='Input')
         self.layers_names = []
 
