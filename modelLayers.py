@@ -1,10 +1,12 @@
 import tensorflow as tf
 from keras import layers, Input
-from server import char2num, num2char
+from dataPipeline import char2num, num2char
 from fuzzywuzzy import fuzz
 import numpy as np
 import cv2
 import random
+from keras.optimizers import Adam
+from keras.callbacks import ModelCheckpoint
 
 
 class CTCLoss(tf.keras.losses.Loss):
@@ -579,3 +581,22 @@ def mouthCascade(img_gray):
         ],
     ]
     return bound
+
+
+def buildModel(input_shape):
+    model = LipsReadModel(input_shape)
+    model.compile(
+        optimizer=Adam(learning_rate=1e-7),
+        loss=CTCLoss(),
+        metrics=[FuzzySimilarity()]
+    )
+
+    checkpoint_path = "data\\models\\checkpoint\\cp-{epoch:04d}-val_FuzzySimilarity-{val_FuzzySimilarity:.2f}.ckpt"
+
+    checkpoint_callback = ModelCheckpoint(
+        checkpoint_path,
+        monitor='val_FuzzySimilarity', verbose=1, save_weights_only=True,
+        save_freq='epoch', mode='auto', save_best_only=True
+    )
+
+    return model, checkpoint_callback
