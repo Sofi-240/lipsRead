@@ -50,9 +50,17 @@ class FuzzySimilarity(tf.keras.metrics.Metric):
 
     @staticmethod
     def update_state_np(y_true, y_pred):
+        input_shape = tf.keras.backend.shape(y_pred)
+        input_length = tf.ones(
+            shape=input_shape[0], dtype='int32'
+        ) * tf.cast(
+            input_shape[1], 'int32'
+        )
+
         decoded = tf.keras.backend.ctc_decode(
-            y_pred, [y_pred.shape[1]] * y_pred.shape[0], greedy=False
+            y_pred, input_length, greedy=False
         )[0][0].numpy()
+
         y_true_str = [
             tf.strings.reduce_join(num2char(y)).numpy().decode('utf-8') for y in y_true
         ]
@@ -62,7 +70,7 @@ class FuzzySimilarity(tf.keras.metrics.Metric):
         sim = [
             fuzz.ratio(yt, yp) / 100 for yt, yp in zip(y_true_str, y_pred_str)
         ]
-        return sum(sim) / 2
+        return sum(sim) / len(sim)
 
     def update_state(self, y_true, y_pred, sample_weight=None):
         sim = tf.py_function(
@@ -238,7 +246,7 @@ class LipsReadModel(tf.keras.models.Model):
 
 
 class ModelCallback(tf.keras.callbacks.Callback):
-    def __init__(self, learning_rate_base=0.01, warmup_learning_rate=1e-7, warmup_steps_practice=0.1,
+    def __init__(self, learning_rate_base=0.001, warmup_learning_rate=0.0, warmup_steps_practice=0.02,
                  global_step_init=0, fuzzy_patience=5):
         super(ModelCallback, self).__init__()
         self.learning_rate_base = learning_rate_base
@@ -586,12 +594,12 @@ def mouthCascade(img_gray):
 def buildModel(input_shape):
     model = LipsReadModel(input_shape)
     model.compile(
-        optimizer=Adam(learning_rate=1e-7),
+        optimizer=Adam(),
         loss=CTCLoss(),
         metrics=[FuzzySimilarity()]
     )
 
-    checkpoint_path = "data\\models\\checkpoint\\cp-{epoch:04d}-val_FuzzySimilarity-{val_FuzzySimilarity:.2f}.ckpt"
+    checkpoint_path = "data\\models\\checkpoint\\"
 
     checkpoint_callback = ModelCheckpoint(
         checkpoint_path,

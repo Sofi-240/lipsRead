@@ -97,11 +97,10 @@ def createPipeline():
     )
 
     data = data.padded_batch(
-        2, padded_shapes=([75, 288, 360, 3], [40])
+        4, padded_shapes=([75, 288, 360, 3], [40])
     )
 
     data = data.prefetch(
         tf.data.AUTOTUNE
     )
     return data
-
