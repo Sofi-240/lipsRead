@@ -52,14 +52,25 @@ class FuzzySimilarity(tf.keras.metrics.Metric):
     def update_state_np(y_true, y_pred):
         input_shape = tf.keras.backend.shape(y_pred)
         input_length = tf.ones(
-            shape=input_shape[0], dtype='int32'
+            shape=input_shape[0]
         ) * tf.cast(
-            input_shape[1], 'int32'
+            input_shape[1], 'float32'
         )
 
         decoded = tf.keras.backend.ctc_decode(
             y_pred, input_length, greedy=False
-        )[0][0].numpy()
+        )[0][0]
+
+        decoded_shape = tf.keras.backend.shape(decoded)
+
+        decoded = tf.pad(
+            decoded,
+            paddings=[
+                [0, 0],
+                [0, input_shape[1] - decoded_shape[1]]
+            ],
+            constant_values=-1
+        ).numpy()
 
         y_true_str = [
             tf.strings.reduce_join(num2char(y)).numpy().decode('utf-8') for y in y_true
